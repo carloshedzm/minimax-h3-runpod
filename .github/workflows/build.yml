@@ -1,0 +1,64 @@
+# Construye la imagen y la publica en GHCR.
+#
+# No se usa el builder de RunPod porque falla en cuanto se le da un
+# repositorio: clona, crea el directorio de cache y muere sin ejecutar una
+# sola instruccion de Docker. Se comprobo con un Dockerfile de tres lineas
+# basado en alpine, en un endpoint recien creado — fallo igual.
+#
+# Aqui la imagen es pequena (sin pesos), asi que el build es corto y cabe de
+# sobra en un runner gratuito.
+
+name: Construir imagen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  construir:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Liberar espacio en el runner
+        # La imagen base del worker oficial ya es grande y encima se
+        # reinstala torch. El runner trae ~14 GB libres; esto recupera unos
+        # 30 mas. Sin ello el build muere por disco a mitad, que es un fallo
+        # lento y confuso.
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-}" || true
+          sudo apt-get clean
+          df -h / | tail -1
+
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Entrar en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir y publicar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/minimax-h3-ref2va:latest
+            ghcr.io/${{ github.repository_owner }}/minimax-h3-ref2va:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Donde quedo
+        run: |
+          echo "ghcr.io/${{ github.repository_owner }}/minimax-h3-ref2va:latest"
+          echo
+          echo "Hazlo publico una sola vez en:"
+          echo "  https://github.com/users/${{ github.repository_owner }}/packages"
