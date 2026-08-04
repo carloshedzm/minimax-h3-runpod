@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Sin esto, cualquier fallo mata el script en silencio: RunPod solo dice
+# "Job processing failed" y los logs quedan sin una linea que explique por
+# que. Nos costo un arranque entero averiguar que faltaba un ejecutable.
+trap 'echo "[h3] FALLO en la linea $LINENO (codigo $?). El worker no arranca." >&2' ERR
+
 # Descarga los pesos de MiniMax H3 y cede el control al arranque oficial
 # del worker.
 #
@@ -57,18 +62,38 @@ done
 
 if [ "$FALTA" = "1" ]; then
     echo "[h3] descargando ~85 GB desde $MODELOS_HF (la primera vez tarda)"
-    export HF_HUB_ENABLE_HF_TRANSFER=1
-    /opt/venv/bin/hf download "$MODELOS_HF" \
-        --local-dir "$DESTINO" \
-        --exclude "*FL2VA*" \
-        || {
-            # hf_transfer acelera mucho pero es mas fragil ante cortes de
-            # red. Si falla, se reintenta por la via lenta antes de darse
-            # por vencido: mejor tardar que perder el arranque entero.
-            echo "[h3] fallo la descarga rapida; reintento sin hf_transfer"
-            HF_HUB_ENABLE_HF_TRANSFER=0 /opt/venv/bin/hf download "$MODELOS_HF" \
-                --local-dir "$DESTINO" --exclude "*FL2VA*"
-        }
+    # Se usa la API de Python y no el ejecutable de linea de comandos porque
+    # su nombre depende de la version: en huggingface-hub < 1.0 se llama
+    # `huggingface-cli` y a partir de 1.0 `hf`. La imagen base fija
+    # explicitamente "huggingface-hub<1.0", asi que `hf` no existe. Llamar a
+    # la libreria evita depender de eso.
+    MODELOS_HF="$MODELOS_HF" DESTINO="$DESTINO" /opt/venv/bin/python - <<'PY'
+import os, sys
+from huggingface_hub import snapshot_download
+
+repo = os.environ["MODELOS_HF"]
+destino = os.environ["DESTINO"]
+
+def bajar(rapido):
+    # hf_transfer multiplica la velocidad pero es mas fragil ante cortes de
+    # red, y puede no estar instalado. Se intenta con el y se repite sin el.
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1" if rapido else "0"
+    snapshot_download(
+        repo_id=repo,
+        local_dir=destino,
+        # La particion FL2VA son otros 47 GB que no usamos: con ella la foto
+        # seria el fotograma 0 en vez de gobernar la identidad.
+        ignore_patterns=["*FL2VA*"],
+        max_workers=8,
+    )
+
+try:
+    bajar(True)
+except Exception as e:
+    print(f"[h3] la descarga rapida fallo ({e}); reintento sin hf_transfer", flush=True)
+    bajar(False)
+print("[h3] descarga terminada", flush=True)
+PY
 else
     echo "[h3] pesos ya presentes, no se descarga nada"
 fi

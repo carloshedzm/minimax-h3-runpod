@@ -66,9 +66,16 @@ RUN /opt/venv/bin/pip install --no-cache-dir --force-reinstall \
 COPY start-h3.sh /start-h3.sh
 RUN chmod +x /start-h3.sh
 
-# Comprobacion en build: si el plugin no registrara sus nodos, el fallo
-# aparecerria en la primera generacion, despues de pagar un worker.
+# Acelera la descarga de los pesos. Es opcional: si faltara, el script de
+# arranque reintenta por la via lenta.
+RUN /opt/venv/bin/pip install --no-cache-dir hf_transfer
+
+# Comprobaciones en build. Cada una corresponde a algo que ya fallo en
+# ejecucion, donde el diagnostico cuesta un arranque de worker entero.
 RUN test -f /comfyui/custom_nodes/ComfyUI_RH_MinMaxH3/minimax_h3_nodes/nodes.py && \
-    /opt/venv/bin/python -c "import transformers, accelerate, sentencepiece, einops; print('dependencias del plugin OK')"
+    test -x /start.sh && \
+    /opt/venv/bin/python -c "import transformers, accelerate, sentencepiece, einops; print('dependencias del plugin OK')" && \
+    /opt/venv/bin/python -c "from huggingface_hub import snapshot_download; print('descarga de modelos OK')" && \
+    bash -n /start-h3.sh && echo "start-h3.sh OK"
 
 CMD ["/start-h3.sh"]
