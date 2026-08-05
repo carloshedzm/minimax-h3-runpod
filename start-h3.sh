@@ -89,5 +89,41 @@ for f in "${ARCHIVOS[@]}"; do
     fi
 done
 
+# Resumen de una pantalla con lo que decide el rendimiento.
+#
+# Existe porque diagnosticar esto costo varias horas: el aviso de que los
+# kernels rapidos estaban apagados aparecia enterrado entre cientos de lineas
+# y se leyo tarde. Aqui va al principio y en cuatro renglones.
+/opt/venv/bin/python - <<'PY' || echo "[h3] no se pudo consultar torch"
+import torch
+
+nombre = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "sin GPU"
+cap = torch.cuda.get_device_capability(0) if torch.cuda.is_available() else (0, 0)
+sm = f"sm_{cap[0]}{cap[1]}"
+
+# Blackwell es sm_100 (datacenter) y sm_120 (RTX PRO 6000, 5090). Es la unica
+# familia con FP4 en hardware, y el codificador de texto que usamos es nvfp4:
+# en las demas se emula, con un coste enorme por operacion.
+familia = (
+    "Blackwell" if cap[0] >= 10
+    else "Ada" if cap == (8, 9)
+    else "Ampere" if cap[0] == 8
+    else "otra"
+)
+cuda_torch = torch.version.cuda or "?"
+fp4_nativo = "SI" if cap[0] >= 10 else "NO (emulado)"
+kernels = "SI" if tuple(map(int, cuda_torch.split(".")[:2])) >= (13, 0) else "NO"
+
+print("[h3] ── resumen de hardware ──────────────────────────────")
+print(f"[h3]   GPU          : {nombre}  ({sm}, {familia})")
+print(f"[h3]   torch        : {torch.__version__}  (CUDA {cuda_torch})")
+print(f"[h3]   kernels rapidos habilitados : {kernels}   <- exige cu130")
+print(f"[h3]   FP4 nativo (codificador)    : {fp4_nativo}")
+print("[h3] ─────────────────────────────────────────────────────")
+if kernels == "NO":
+    print("[h3] AVISO: con torch < cu130 comfy_kitchen desactiva los backends")
+    print("[h3]        cuda y triton, y todo cae a la ruta lenta 'eager'.")
+PY
+
 echo "[h3] cediendo el control al arranque oficial del worker"
 exec /start.sh

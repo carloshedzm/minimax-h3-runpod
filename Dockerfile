@@ -79,6 +79,15 @@ RUN test -x /start.sh && \
     /opt/venv/bin/python -c "from huggingface_hub import snapshot_download; print('descarga de modelos OK')" && \
     grep -q "MiniMaxH3ReferenceToVideo" /comfyui/comfy_extras/nodes_minimax_h3.py && \
     echo "nodo nativo MiniMaxH3ReferenceToVideo presente" && \
-    bash -n /start-h3.sh && echo "start-h3.sh OK"
+    bash -n /start-h3.sh && echo "start-h3.sh OK" && \
+    # Blackwell es sm_100 y sm_120. Si la rueda de torch no trae esos
+    # objetivos, la tarjeta arrancaria y fallaria luego con "no kernel image
+    # is available", que es un error que ya nos costo horas en otro endpoint.
+    /opt/venv/bin/python -c "\
+import torch; \
+archs = torch.cuda.get_arch_list(); \
+print('arquitecturas compiladas:', ' '.join(archs)); \
+falta = [a for a in ('sm_86','sm_89','sm_100','sm_120') if a not in archs]; \
+print('AVISO, faltan:', falta) if falta else print('cubre Ampere, Ada y Blackwell')"
 
 CMD ["/start-h3.sh"]
