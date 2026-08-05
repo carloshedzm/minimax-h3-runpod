@@ -50,6 +50,26 @@ RUN cd /comfyui/custom_nodes && \
     git log -1 --format='PLUGIN %h %ad' --date=short && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
+# Sin anclar los pesos en RAM.
+#
+# El offload por capas mantiene el modelo entero en memoria del sistema y va
+# pasando bloques a la GPU. Por defecto la ancla (pinned memory) para que esas
+# transferencias no bloqueen, pero eso reserva los 47 GB del modelo de golpe:
+#
+#   memory_required=56838265372  pins_required=46997542600
+#   unhealthy container: triggered memory limits (OOM)
+#
+# El contenedor de RunPod tiene un limite de RAM muy inferior al de la maquina
+# anfitriona -- los 459 GB que reporta el chequeo de arranque son del host, no
+# nuestros -- asi que el proceso muere al intentarlo.
+#
+# Sin anclar, las transferencias a la GPU son algo mas lentas pero la memoria
+# se reserva a demanda. Es la diferencia entre ir despacio y no arrancar.
+ARG PIN_MEMORY=False
+RUN F=/comfyui/custom_nodes/ComfyUI_RH_MinMaxH3/minimax_h3_nodes/runtime/h3_settings.py && \
+    sed -i "s/^DIT_LAYERWISE_PIN_MEMORY = True/DIT_LAYERWISE_PIN_MEMORY = ${PIN_MEMORY}/" "$F" && \
+    grep -n "DIT_LAYERWISE_PIN_MEMORY\|ENABLE_DIT_LAYERWISE_OFFLOAD" "$F"
+
 # Los requirements del plugin arrastran torch a una version cuya rueda por
 # defecto es cu130. La flota de RunPod va con driver 570.x (CUDA 12.8), donde
 # cu130 no arranca. Se fuerza cu126, que si corre sobre 12.8.
