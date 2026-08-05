@@ -77,7 +77,7 @@ MODELOS_HF="$MODELOS_HF" UPSTREAM_HF="$UPSTREAM_HF" \
 import os
 from huggingface_hub import snapshot_download
 
-def bajar(repo, destino, ignorar, que):
+def bajar(repo, destino, ignorar, que, permitir=None):
     # hf_transfer multiplica la velocidad pero es mas fragil ante cortes de
     # red, y puede no estar instalado. Se intenta con el y se repite sin el.
     for rapido in (True, False):
@@ -87,6 +87,7 @@ def bajar(repo, destino, ignorar, que):
             snapshot_download(
                 repo_id=repo,
                 local_dir=destino,
+                allow_patterns=permitir,
                 ignore_patterns=ignorar,
                 max_workers=8,
             )
@@ -102,17 +103,41 @@ def bajar(repo, destino, ignorar, que):
 #    gobernar la identidad.
 bajar(os.environ["MODELOS_HF"], os.environ["DESTINO"], ["*FL2VA*"], "pesos (~85 GB)")
 
-# 2) La arquitectura. Se excluyen los .safetensors porque los tensores ya
-#    vienen del paso anterior: quedan 145 MB de configs y tokenizer en vez de
-#    cientos de GB.
+# 2) La arquitectura: SOLO el subarbol Ref2VA.
+#
+#    Bajar el repositorio entero rompe el cargador. En la raiz hay otro
+#    model_index.json que no describe una particion sino un indice hacia
+#    las demas:
+#
+#      "index_scope": "repository",
+#      "task_family_indexes": {"fl2va": "FL2VA/...", "ref2va": "Ref2VA/..."}
+#
+#    El plugin no sigue esa indireccion: valida el primero que encuentra y
+#    falla con "partition must be one of ('fl2va','ref2va')" porque ese
+#    archivo no tiene campo partition. La estructura que documenta su README
+#    solo contiene FL2VA/ y Ref2VA/, sin nada suelto arriba.
+#
+#    Se excluyen ademas los .safetensors: los tensores ya vienen del paso
+#    anterior, asi que aqui solo hacen falta configs y tokenizer.
 bajar(
     os.environ["UPSTREAM_HF"],
     os.environ["DIFFUSERS"],
-    ["*.safetensors", "assets/*", "docs/*", "scripts/*"],
-    "configs (~145 MB)",
+    ["*.safetensors"],
+    "configs de Ref2VA",
+    permitir=["Ref2VA/*", "Ref2VA/**"],
 )
 print("[h3] descargas terminadas", flush=True)
 PY
+
+# Un worker reanudado por FlashBoot puede conservar los archivos sueltos que
+# bajaba la version anterior de este script. Se borran: si el de la raiz
+# sigue ahi, el cargador lo lee antes que el de Ref2VA y falla.
+for sobra in model_index.json modular_model_index.json; do
+    if [ -f "$DIFFUSERS/$sobra" ]; then
+        echo "[h3] quitando $sobra de la raiz (confunde al cargador)"
+        rm -f "$DIFFUSERS/$sobra"
+    fi
+done
 
 echo "[h3] pesos en $DESTINO:"
 du -sh "$DESTINO" 2>/dev/null || true
