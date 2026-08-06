@@ -29,15 +29,28 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential python3-dev ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-# ComfyUI 0.30.1: los nodos nativos de H3 aparecen en 0.30.0.
+# ComfyUI desde NUESTRO fork, no del de comfyanonymous.
+#
+# La rama h3-carlos nace exactamente del tag v0.30.1 —commit 0764232— que es
+# donde aparecen los nodos nativos de H3. Mientras nadie la toque, la imagen
+# sale identica a la que se construia antes desde el repo original.
+#
+# Apuntar al fork es lo que permite modificar el propio ComfyUI: los nodos de
+# comfy_extras/nodes_minimax_h3.py, la arquitectura en comfy/ldm/minimax/, los
+# valores por defecto del modelo. Todo eso queda fuera del alcance del JSON del
+# workflow, que solo puede rellenar parametros que el nodo ya expone.
 #
 # CRITICO: se instala en /opt/venv, que es el entorno que realmente ejecuta el
 # worker (ver ENV PATH de la imagen base). En /comfyui/.venv hay otro que no se
 # usa; instalar ahi deja el runtime con paquetes viejos y los pesos
 # int8_convrot fallan en silencio.
+ARG COMFY_REPO=https://github.com/carloshedzm/ComfyUI.git
+ARG COMFY_REF=h3-carlos
 RUN cd /comfyui && \
-    git fetch --depth 1 origin refs/tags/v0.30.1 && \
+    git remote set-url origin "${COMFY_REPO}" && \
+    git fetch --depth 1 origin "${COMFY_REF}" && \
     git checkout FETCH_HEAD && \
+    git log -1 --format="ComfyUI en %h  %s" && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # torch con cu130. NO bajar esto a cu126.
